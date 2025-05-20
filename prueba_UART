@@ -1,0 +1,63 @@
+#define F_CPU 16000000UL
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+#include <string.h>
+#include <stdlib.h>
+#include "servo.h"
+
+#define SERVO_MIN_TICKS 1000
+#define SERVO_MAX_TICKS 2000
+
+char buffer[64];
+uint8_t buf_index = 0;
+
+void uart_init(void) {
+	uint16_t ubrr = F_CPU / 16 / 9600 - 1;
+	UBRR0H = (ubrr >> 8);
+	UBRR0L = ubrr;
+	UCSR0B = (1 << RXEN0) | (1 << TXEN0);
+	UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
+}
+
+char uart_receive(void) {
+	while (!(UCSR0A & (1 << RXC0)));
+	return UDR0;
+}
+
+void procesar_uart(char *comando) {
+	char *token = strtok(comando, ";");
+	while (token != NULL) {
+		if (strncmp(token, "servo", 5) == 0) {
+			uint8_t index = token[5] - '1';
+			char *p = strchr(token, ':');
+			if (p && index < 4) {
+				uint8_t angle = atoi(p + 1);
+				if (angle <= 180) {
+					uint16_t ticks = SERVO_MIN_TICKS + ((uint32_t)angle * (SERVO_MAX_TICKS - SERVO_MIN_TICKS)) / 180;
+					servo_set_position(index, ticks);
+				}
+			}
+		}
+		token = strtok(NULL, ";");
+	}
+}
+
+int main(void) {
+	servo_init();
+	uart_init();
+	sei();
+
+	while (1) {
+		if (UCSR0A & (1 << RXC0)) {
+			char c = uart_receive();
+			if (c == '\n') {
+				buffer[buf_index] = '\0';
+				procesar_uart(buffer);
+				buf_index = 0;
+				} else if (buf_index < sizeof(buffer) - 1) {
+				buffer[buf_index++] = c;
+			}
+		}
+	}
+}
